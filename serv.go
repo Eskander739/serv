@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/md5"
@@ -14,8 +13,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
-	"sync"
 	"time"
 )
 
@@ -42,6 +39,7 @@ type Services struct {
 	Client *http.Client
 	SqlDb  *sql.DB
 	Id     string
+	Table  string
 }
 
 const (
@@ -51,17 +49,13 @@ const (
 	dbname   = "requests"
 )
 
-func dsn(host string) string {
-	if host == "" {
-		return fmt.Sprintf("%s:%s@tcp(%s)/%s", username, password, hostname, dbname)
-	} else {
-		return fmt.Sprintf("%s:%s@tcp(%s)/%s", username, password, host, dbname)
-	}
+func dsn() string {
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s", username, password, hostname, dbname)
 
 }
 
-func dbConnection(host string) (*sql.DB, error) {
-	var dbFirstName = fmt.Sprintf("%s:%s@tcp(%s)/", username, password, host)
+func dbConnection() (*sql.DB, error) {
+	var dbFirstName = fmt.Sprintf("%s:%s@tcp(%s)/", username, password, hostname)
 	db, err := sql.Open("mysql", dbFirstName)
 	if err != nil {
 		log.Printf("Error %s when opening DB\n", err)
@@ -83,7 +77,7 @@ func dbConnection(host string) (*sql.DB, error) {
 	log.Printf("rows affected %d\n", no)
 
 	db.Close()
-	db, err = sql.Open("mysql", dsn(host))
+	db, err = sql.Open("mysql", dsn())
 	if err != nil {
 		log.Printf("Error %s when opening DB", err)
 		return nil, err
@@ -253,6 +247,26 @@ func (c Services) addInfo(data MainReq) error {
 	return ErrorAddInfo
 }
 
+func (c Services) addInfoTask(idTask string, data []byte) error {
+	/*
+		Добавляет запрос в БД
+	*/
+
+	var ErrorAddInfo error
+
+	records := `INSERT INTO tasks(IdReq, RequestData) VALUES (?, ?)`
+	query, prepareError := c.SqlDb.Prepare(records)
+	if prepareError != nil {
+		ErrorAddInfo = prepareError
+	}
+
+	_, execError := query.Exec(idTask, data)
+	if execError != nil {
+		ErrorAddInfo = execError
+	}
+	return ErrorAddInfo
+}
+
 func uuid() string {
 	/*
 		Генератор уникальных id
@@ -269,7 +283,7 @@ func uuid() string {
 	return uuid
 }
 
-func (c Services) createTable() error {
+func (c Services) ReqAndResponse() error {
 	/*
 		Создает таблицу req_and_response
 	*/
@@ -304,56 +318,125 @@ func (c Services) createTable() error {
 
 }
 
+func (c Services) Tasks() error {
+	/*
+		Создает таблицу req_and_response
+	*/
+
+	users_table := `CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER NOT NULL PRIMARY KEY auto_increment,
+      IdReq TEXT,
+      RequestData BLOB)`
+
+	ctx, cancelfunc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelfunc()
+	res, err := c.SqlDb.ExecContext(ctx, users_table)
+	if err != nil {
+		log.Printf("Error %s when creating product table", err)
+		panic(err)
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("Error %s when getting rows affected", err)
+		panic(err)
+		return err
+	}
+	log.Printf("Rows affected when creating table: %d", rows)
+	return nil
+
+}
+
 func (c Services) fetchRequests() ([]map[string]any, error) {
 	/*
 		Выкачивает всю инфу из БД
 	*/
 
-	var results []map[string]any
-	record, queryError := c.SqlDb.Query("SELECT * FROM req_and_response")
+	if c.Table == "req_and_response" {
+		var results []map[string]any
+		record, queryError := c.SqlDb.Query("SELECT * FROM req_and_response")
 
-	if queryError != nil {
-		return results, queryError
-	}
-
-	defer func(record *sql.Rows) {
-		err := record.Close()
-		if err != nil {
-			panic(err)
+		if queryError != nil {
+			return results, queryError
 		}
 
-	}(record)
+		defer func(record *sql.Rows) {
+			err := record.Close()
+			if err != nil {
+				panic(err)
+			}
 
-	for record.Next() {
-		var res = map[string]any{}
-		var id int
-		var IdReq string
-		var HeadersResp []byte
-		var Length int
-		var Status int
-		var HeadersReq []byte
-		var Body []byte
-		var Method string
-		var Url string
-		scanError := record.Scan(&id, &IdReq, &HeadersResp, &Length, &Status, &HeadersReq, &Body, &Method, &Url)
+		}(record)
 
-		if scanError != nil {
-			return results, scanError
+		for record.Next() {
+			var res = map[string]any{}
+			var id int
+			var IdReq string
+			var HeadersResp []byte
+			var Length int
+			var Status int
+			var HeadersReq []byte
+			var Body []byte
+			var Method string
+			var Url string
+			scanError := record.Scan(&id, &IdReq, &HeadersResp, &Length, &Status, &HeadersReq, &Body, &Method, &Url)
+
+			if scanError != nil {
+				return results, scanError
+			}
+
+			res["id"] = id
+			res["IdReq"] = IdReq
+			res["HeadersResp"] = HeadersResp
+			res["Length"] = Length
+			res["Status"] = Status
+			res["HeadersReq"] = HeadersReq
+			res["Body"] = Body
+			res["Method"] = Method
+			res["Url"] = Url
+			results = append(results, res)
 		}
 
-		res["id"] = id
-		res["IdReq"] = IdReq
-		res["HeadersResp"] = HeadersResp
-		res["Length"] = Length
-		res["Status"] = Status
-		res["HeadersReq"] = HeadersReq
-		res["Body"] = Body
-		res["Method"] = Method
-		res["Url"] = Url
-		results = append(results, res)
-	}
+		return results, nil
 
-	return results, nil
+	} else if c.Table == "tasks" {
+		var results []map[string]any
+		record, queryError := c.SqlDb.Query("SELECT * FROM tasks")
+
+		if queryError != nil {
+			return results, queryError
+		}
+
+		defer func(record *sql.Rows) {
+			err := record.Close()
+			if err != nil {
+				panic(err)
+			}
+
+		}(record)
+
+		for record.Next() {
+			var res = map[string]any{}
+			var id int
+			var IdReq string
+			var RequestData []byte
+
+			scanError := record.Scan(&id, &IdReq, &RequestData)
+
+			if scanError != nil {
+				return results, scanError
+			}
+
+			res["id"] = id
+			res["IdReq"] = IdReq
+			res["RequestData"] = RequestData
+			results = append(results, res)
+		}
+
+		return results, nil
+	} else {
+		return nil, nil
+	}
 
 }
 
@@ -452,6 +535,24 @@ func (c Services) searchById() ([]byte, error) {
 
 }
 
+func (c Services) searchByIdTask(idTask string) ([]byte, error) {
+	/*
+		Делает поиск внутри БД по id, если id совпадают, возвращает сохраненный с ним request+response
+	*/
+
+	var requests, ErrorfetchRequests = c.fetchRequests()
+
+	for _, requestIter := range requests {
+		if requestIter["IdReq"] == idTask {
+
+			return requestIter["RequestData"].([]byte), ErrorfetchRequests
+		}
+
+	}
+	return nil, ErrorfetchRequests
+
+}
+
 func (c Services) IdFromDb() (int, error) {
 	/*
 		Делает поиск внутри БД по id, если id совпадают, возвращает id строки из БД
@@ -470,8 +571,7 @@ func (c Services) IdFromDb() (int, error) {
 
 }
 
-func methodPost(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg *sync.WaitGroup) {
-	defer wg.Done()
+func methodPost(decoder []byte, sqlInstance *sql.DB, idTask string) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	var jsonReq = Request{}
@@ -500,7 +600,7 @@ func methodPost(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg 
 	var url = jsonReq.Url
 
 	var jsR = Request{Method: jsonReq.Method, Url: url, Headers: jsonReq.Headers, Body: jsonReq.Body}
-	var services = Services{Req: jsR, SqlDb: sqlInstance, Client: client}
+	var services = Services{Req: jsR, SqlDb: sqlInstance, Client: client, Table: "req_and_response"}
 	var cacheLRU, ErrorCacheLRU = services.CacheLRU()
 	if ErrorCacheLRU != nil {
 		panic(ErrorCacheLRU)
@@ -509,8 +609,6 @@ func methodPost(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg 
 	if cacheLRU == nil {
 
 		var uuidForReq = uuid()
-
-		response := map[string]string{"id": uuidForReq}
 
 		var httpResponse, ErrorHttpRequest = services.HttpRequest()
 		if ErrorHttpRequest != nil {
@@ -527,9 +625,436 @@ func methodPost(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg 
 				panic(ErrorAddInfo)
 			}
 
-			var dataToWatch, jsonError = json.MarshalIndent(response, "", "   ")
-			_, writeError := rw.Write(dataToWatch)
-			rw.WriteHeader(200)
+			var dataToWatch, jsonError = json.MarshalIndent(headersData, "", "   ")
+			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+			if ErrorAddInfoTask != nil {
+				panic(ErrorAddInfoTask)
+			}
+			if jsonError != nil {
+				panic(jsonError)
+			}
+
+		}
+
+	} else {
+
+		ErrorAddInfoTask := services.addInfoTask(idTask, cacheLRU)
+		if ErrorAddInfoTask != nil {
+			panic(ErrorAddInfoTask)
+		}
+
+	}
+}
+
+type ReqId struct {
+	Id string
+}
+
+func methodGet(decoder []byte, sqlInstance *sql.DB, idTask string) {
+	/*
+		Метод возвращает request по id
+	*/
+
+	var jsonReq = ReqId{}
+
+	unmarshalError := json.Unmarshal(decoder, &jsonReq)
+	if unmarshalError != nil {
+		panic(unmarshalError)
+	}
+
+	if jsonReq.Id == "" {
+		var services = Services{SqlDb: sqlInstance, Table: "tasks"}
+		var errorData = map[string]string{"Error": "ID field is empty"}
+
+		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+		ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+		if ErrorAddInfoTask != nil {
+			panic(ErrorAddInfoTask)
+		}
+		if jsonError != nil {
+			panic(jsonError)
+		}
+
+	} else {
+		var services = Services{SqlDb: sqlInstance, Id: jsonReq.Id, Table: "req_and_response"}
+		var text, ErrorsearchById = services.searchById()
+		if ErrorsearchById != nil {
+			panic(ErrorsearchById)
+		}
+
+		if text == nil {
+			var errorData = map[string]string{"Error": "Request not found"}
+
+			var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+			if ErrorAddInfoTask != nil {
+				panic(ErrorAddInfoTask)
+			}
+			if jsonError != nil {
+				panic(jsonError)
+			}
+
+		} else {
+			ErrorAddInfoTask := services.addInfoTask(idTask, text)
+			if ErrorAddInfoTask != nil {
+				panic(ErrorAddInfoTask)
+			}
+		}
+	}
+
+}
+
+func methodGetTask(sqlInstance *sql.DB, idTask string, rw http.ResponseWriter) {
+	/*
+		Метод возвращает request по id
+	*/
+	var services = Services{SqlDb: sqlInstance, Table: "tasks"}
+	var text, ErrorsearchById = services.searchByIdTask(idTask)
+	if ErrorsearchById != nil {
+		panic(ErrorsearchById)
+	}
+
+	if text == nil {
+		var errorData = map[string]string{"Error": "Request not found"}
+
+		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+		_, WriteError := rw.Write(dataToWatch)
+		if WriteError != nil {
+			panic(WriteError)
+		}
+		if jsonError != nil {
+			panic(jsonError)
+		}
+
+	} else {
+		_, WriteError := rw.Write(text)
+		if WriteError != nil {
+			panic(WriteError)
+		}
+
+	}
+}
+
+func methodDelete(decoder []byte, sqlInstance *sql.DB, idTask string) {
+	/*
+		Метод удаляет request по id
+	*/
+
+	var jsonReq = ReqId{}
+
+	unmarshalError := json.Unmarshal(decoder, &jsonReq)
+	if unmarshalError != nil {
+		panic(unmarshalError)
+	}
+
+	if jsonReq.Id == "" {
+		var services = Services{SqlDb: sqlInstance}
+		var errorData = map[string]string{"Error": "ID field is empty"}
+
+		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+		ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+		if ErrorAddInfoTask != nil {
+			panic(ErrorAddInfoTask)
+		}
+		if jsonError != nil {
+			panic(jsonError)
+		}
+	} else {
+		var id = jsonReq.Id
+		var services = Services{Id: id, SqlDb: sqlInstance, Table: "req_and_response"}
+		var removed, ErrorRemoveInfo = services.removeInfo()
+		if ErrorRemoveInfo != nil {
+			panic(ErrorRemoveInfo)
+		}
+
+		if removed {
+			var errorData = map[string]string{"OK": "Request deleted"}
+
+			var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+			if ErrorAddInfoTask != nil {
+				panic(ErrorAddInfoTask)
+			}
+			if jsonError != nil {
+				panic(jsonError)
+			}
+
+		} else if !removed {
+			var errorData = map[string]string{"Error": "Request not found"}
+
+			var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+			if ErrorAddInfoTask != nil {
+				panic(ErrorAddInfoTask)
+			}
+			if jsonError != nil {
+				panic(jsonError)
+			}
+		}
+
+	}
+
+}
+
+type idTaskReq struct {
+	IdTask string
+}
+
+func dbInitialization() *sql.DB {
+	/*
+		Метод возвращает инстанс и создает таблицу если её не существует
+	*/
+
+	db, dateBaseError := dbConnection()
+	if dateBaseError != nil {
+		panic(dateBaseError)
+	}
+	var services = Services{SqlDb: db}
+	ErrorReqAndResponse := services.ReqAndResponse()
+	if ErrorReqAndResponse != nil {
+		panic(ErrorReqAndResponse)
+	}
+
+	ErrorTasks := services.Tasks()
+	if ErrorTasks != nil {
+		panic(ErrorTasks)
+	}
+
+	return db
+}
+
+func Worker(mainChan chan WKData, StatusChan chan string, i int) {
+	fmt.Println("Запущена горутина: ", i)
+	for {
+
+		var mainData = <-mainChan
+
+		var idTask = mainData.Id
+		var decoder = mainData.Decoder
+		var sqlInstance = mainData.Db
+		var methodWK = mainData.Method
+		fmt.Println("Работает горутина номер ", i)
+		if methodWK == http.MethodGet {
+			StatusChan <- "Task started"
+
+			var jsonReq = ReqId{}
+
+			unmarshalError := json.Unmarshal(decoder, &jsonReq)
+			if unmarshalError != nil {
+				panic(unmarshalError)
+			}
+
+			if jsonReq.Id == "" {
+				var services = Services{SqlDb: sqlInstance, Table: "tasks"}
+				var errorData = map[string]string{"Error": "ID field is empty"}
+
+				var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+				ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+				if ErrorAddInfoTask != nil {
+					panic(ErrorAddInfoTask)
+				}
+				if jsonError != nil {
+					panic(jsonError)
+				}
+
+			} else {
+				var services = Services{SqlDb: sqlInstance, Id: jsonReq.Id, Table: "req_and_response"}
+				var text, ErrorsearchById = services.searchById()
+				if ErrorsearchById != nil {
+					panic(ErrorsearchById)
+				}
+
+				if text == nil {
+					var errorData = map[string]string{"Error": "Request not found"}
+
+					var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+					if ErrorAddInfoTask != nil {
+						panic(ErrorAddInfoTask)
+					}
+					if jsonError != nil {
+						panic(jsonError)
+					}
+
+				} else {
+					ErrorAddInfoTask := services.addInfoTask(idTask, text)
+					if ErrorAddInfoTask != nil {
+						panic(ErrorAddInfoTask)
+					}
+				}
+			}
+		} else if methodWK == http.MethodPost {
+			StatusChan <- "Task started"
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			var jsonReq = Request{}
+
+			var unmarshalError = json.Unmarshal(decoder, &jsonReq)
+
+			if unmarshalError != nil {
+				panic(unmarshalError)
+			}
+
+			var body = map[string]string{}
+			var headers = map[string]string{}
+			if jsonReq.Body == nil {
+				body = nil
+			} else {
+				body = jsonReq.Body
+			}
+
+			if jsonReq.Headers == nil {
+				headers = nil
+
+			} else {
+				headers = jsonReq.Headers
+			}
+			var method = jsonReq.Method
+			var url = jsonReq.Url
+
+			var jsR = Request{Method: jsonReq.Method, Url: url, Headers: jsonReq.Headers, Body: jsonReq.Body}
+			var services = Services{Req: jsR, SqlDb: sqlInstance, Client: client, Table: "req_and_response"}
+			var cacheLRU, ErrorCacheLRU = services.CacheLRU()
+			if ErrorCacheLRU != nil {
+				panic(ErrorCacheLRU)
+			}
+
+			if cacheLRU == nil {
+
+				var uuidForReq = uuid()
+
+				var httpResponse, ErrorHttpRequest = services.HttpRequest()
+				if ErrorHttpRequest != nil {
+					panic(ErrorHttpRequest)
+				}
+
+				if httpResponse.StatusCode != 400 {
+					var contentType = httpResponse.Header["Content-Type"][0]
+					var secondHeaders = map[string]any{"Content-Length": httpResponse.ContentLength, "Content-Type": contentType}
+					var headersData = MainReq{Id: uuidForReq, Request: Request{Headers: headers, Body: body, Method: method, Url: url},
+						Response: Response{Headers: secondHeaders, Length: int(httpResponse.ContentLength), Status: httpResponse.StatusCode}}
+					ErrorAddInfo := services.addInfo(headersData)
+					if ErrorAddInfo != nil {
+						panic(ErrorAddInfo)
+					}
+
+					var dataToWatch, jsonError = json.MarshalIndent(headersData, "", "   ")
+					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+					if ErrorAddInfoTask != nil {
+						panic(ErrorAddInfoTask)
+					}
+					if jsonError != nil {
+						panic(jsonError)
+					}
+
+				}
+
+			} else {
+
+				ErrorAddInfoTask := services.addInfoTask(idTask, cacheLRU)
+				if ErrorAddInfoTask != nil {
+					panic(ErrorAddInfoTask)
+				}
+
+			}
+
+		} else if methodWK == http.MethodDelete {
+			StatusChan <- "Task started"
+			var jsonReq = ReqId{}
+
+			unmarshalError := json.Unmarshal(decoder, &jsonReq)
+			if unmarshalError != nil {
+				panic(unmarshalError)
+			}
+
+			if jsonReq.Id == "" {
+				var services = Services{SqlDb: sqlInstance}
+				var errorData = map[string]string{"Error": "ID field is empty"}
+
+				var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+				ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+				if ErrorAddInfoTask != nil {
+					panic(ErrorAddInfoTask)
+				}
+				if jsonError != nil {
+					panic(jsonError)
+				}
+			} else {
+				var id = jsonReq.Id
+				var services = Services{Id: id, SqlDb: sqlInstance, Table: "req_and_response"}
+				var removed, ErrorRemoveInfo = services.removeInfo()
+				if ErrorRemoveInfo != nil {
+					panic(ErrorRemoveInfo)
+				}
+
+				if removed {
+					var errorData = map[string]string{"OK": "Request deleted"}
+
+					var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+					if ErrorAddInfoTask != nil {
+						panic(ErrorAddInfoTask)
+					}
+					if jsonError != nil {
+						panic(jsonError)
+					}
+
+				} else if !removed {
+					var errorData = map[string]string{"Error": "Request not found"}
+
+					var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+					if ErrorAddInfoTask != nil {
+						panic(ErrorAddInfoTask)
+					}
+					if jsonError != nil {
+						panic(jsonError)
+					}
+				}
+
+			}
+		}
+
+	}
+
+}
+
+type WKData struct {
+	Decoder []byte
+	Method  string
+	Db      *sql.DB
+	Id      string
+}
+
+func main() {
+	db := dbInitialization()
+	var StatusChan = make(chan string)
+	var mainChan = make(chan WKData)
+	for i := 1; i != 6; i += 1 {
+		go Worker(mainChan, StatusChan, i)
+	}
+
+	var server = func(w http.ResponseWriter, r *http.Request) {
+
+		decoder, errReadAll := ioutil.ReadAll(r.Body)
+		if errReadAll != nil {
+			panic(errReadAll)
+		}
+
+		var Req = idTaskReq{}
+		unmarshalError := json.Unmarshal(decoder, &Req)
+		if unmarshalError != nil {
+			panic(unmarshalError)
+		}
+		if r.Method == http.MethodGet && Req.IdTask != "" {
+			methodGetTask(db, Req.IdTask, w)
+
+		} else {
+			var idTask = uuid()
+			mainChan <- WKData{decoder, r.Method, db, idTask}
+			var TaskData = map[string]string{"idTask": idTask, "Status": <-StatusChan}
+			var idTaskData, jsonError = json.MarshalIndent(TaskData, "", "   ")
+			_, writeError := w.Write(idTaskData)
 			if writeError != nil {
 				panic(writeError)
 			}
@@ -537,172 +1062,11 @@ func methodPost(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg 
 				panic(jsonError)
 			}
 
-		} else {
-			rw.WriteHeader(400)
-			http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		}
-
-	} else {
-		_, writeError2 := rw.Write(cacheLRU)
-		if writeError2 != nil {
-			panic(writeError2)
-		}
-	}
-
-}
-
-type ReqId struct {
-	Id string
-}
-
-func methodGet(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg *sync.WaitGroup) {
-	/*
-		Метод возвращает request по id
-	*/
-
-	defer wg.Done()
-
-	var err = func(error error, respWriter http.ResponseWriter) {
-		if error != nil {
-			err := fmt.Sprintf("%v", error)
-			_, errWrite := respWriter.Write([]byte(err))
-			if errWrite != nil {
-				panic(errWrite)
-			}
-
-			http.Error(respWriter, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-
-		}
-	}
-
-	var jsonReq = ReqId{}
-
-	unmarshalError := json.Unmarshal(decoder, &jsonReq)
-	if unmarshalError != nil {
-		//err(unmarshalError, responseWriter)
-	}
-
-	if jsonReq.Id == "" {
-		http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-	} else {
-		var services = Services{SqlDb: sqlInstance, Id: jsonReq.Id}
-		var text, ErrorsearchById = services.searchById()
-		if ErrorsearchById != nil {
-			err(ErrorsearchById, rw)
-		}
-		if text == nil {
-			http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		} else {
-			_, writeError := rw.Write(text)
-			if writeError != nil {
-				err(writeError, rw)
-			}
-
-			rw.WriteHeader(200)
-		}
-	}
-
-}
-
-func methodDelete(decoder []byte, sqlInstance *sql.DB, rw http.ResponseWriter, wg *sync.WaitGroup) {
-	/*
-		Метод удаляет request по id
-	*/
-
-	defer wg.Done()
-
-	var err = func(error error, respWriter http.ResponseWriter) {
-		if error != nil {
-			err := fmt.Sprintf("%v", error)
-			_, errWrite := respWriter.Write([]byte(err))
-			if errWrite != nil {
-				panic(errWrite)
-			}
-
-			http.Error(respWriter, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-
-		}
-	}
-
-	var jsonReq = ReqId{}
-
-	unmarshalError := json.Unmarshal(decoder, &jsonReq)
-	if unmarshalError != nil {
-		err(unmarshalError, rw)
-	}
-
-	if jsonReq.Id == "" {
-		http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-	} else {
-		var id = jsonReq.Id
-		var services = Services{Id: id, SqlDb: sqlInstance}
-		var removed, ErrorRemoveInfo = services.removeInfo()
-		if ErrorRemoveInfo != nil {
-			err(ErrorRemoveInfo, rw)
-		}
-
-		if removed {
-			http.Error(rw, http.StatusText(http.StatusOK), http.StatusOK)
-			rw.WriteHeader(200)
-		} else if !removed {
-			http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		}
-
-	}
-
-}
-
-func dbInitialization() *sql.DB {
-	/*
-		Метод возвращает инстанс и создает таблицу если её не существует
-	*/
-	fmt.Println("Введите хост и порт для подключения к MySQL")
-	sc := bufio.NewScanner(os.Stdin)
-	sc.Scan()
-	txt := sc.Text()
-
-	db, dateBaseError := dbConnection(txt)
-	if dateBaseError != nil {
-		panic(dateBaseError)
-	}
-	var services = Services{SqlDb: db}
-	ErrorCreateTable := services.createTable()
-	if ErrorCreateTable != nil {
-		panic(ErrorCreateTable)
-	}
-
-	return db
-}
-
-func main() {
-	fmt.Println("AppGoLearn is start ^_^")
-	db := dbInitialization()
-	var wg sync.WaitGroup
-
-	var server = func(w http.ResponseWriter, r *http.Request) {
-		decoder, errReadAll := ioutil.ReadAll(r.Body)
-		if errReadAll != nil {
-			panic(errReadAll)
-		}
-
-		wg.Add(1)
-		if r.Method == http.MethodGet {
-			go methodGet(decoder, db, w, &wg)
-
-		} else if r.Method == http.MethodPost {
-			go methodPost(decoder, db, w, &wg)
-
-		} else if r.Method == http.MethodDelete {
-			go methodDelete(decoder, db, w, &wg)
-
-		}
-
 		errClose := r.Body.Close()
 		if errClose != nil {
 			panic(errClose)
 		}
-
-		wg.Wait()
 
 	}
 
