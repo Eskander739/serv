@@ -1,5 +1,6 @@
 package main
 
+// нужно добавить go модули
 import (
 	"bytes"
 	"context"
@@ -834,6 +835,9 @@ func Worker(mainChan chan WKData, StatusChan chan string, i int) {
 		var sqlInstance = mainData.Db
 		var methodWK = mainData.Method
 		fmt.Println("Работает горутина номер ", i)
+		// зачем здесь обработка http методов GET и DELETE
+		// что эти эти методы должны делать и почему они в воркере?
+		// воркер про http часть ничего не должен здать, воркер просто выполняет задаяние
 		if methodWK == http.MethodGet {
 			StatusChan <- "Task started"
 
@@ -1052,7 +1056,7 @@ func main() {
 		} else {
 			var idTask = uuid()
 			mainChan <- WKData{decoder, r.Method, db, idTask}
-			var TaskData = map[string]string{"idTask": idTask, "Status": <-StatusChan}
+			var TaskData = map[string]string{"idTask": idTask, "Status": <-StatusChan} // здесь зачем статус ждать? зачем это нужно, также у тебя тут блокироваться будет и потеряется вся асинхронность
 			var idTaskData, jsonError = json.MarshalIndent(TaskData, "", "   ")
 			_, writeError := w.Write(idTaskData)
 			if writeError != nil {
