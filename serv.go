@@ -99,7 +99,7 @@ func dbConnection() (*sql.DB, error) {
 	return db, nil
 }
 
-func (c Services) CacheLRU() ([]byte, error) {
+func (c Services) CacheLRU() (MainReq, error) {
 	/*
 		Проверяет, существует ли подобный request в БД, если да, возвращает request+response
 	*/
@@ -108,7 +108,7 @@ func (c Services) CacheLRU() ([]byte, error) {
 	var body = fmt.Sprintf("%s", c.Req.Body)
 	var requests, ErrorfetchRequests = c.fetchRequests()
 	if ErrorfetchRequests != nil {
-		return nil, ErrorfetchRequests
+		return MainReq{}, ErrorfetchRequests
 	}
 	for _, requestIter := range requests {
 		var methodLocal = (requestIter["Method"]).(string)
@@ -121,7 +121,7 @@ func (c Services) CacheLRU() ([]byte, error) {
 		var unmarshalError = json.Unmarshal(requestIter["Body"].([]byte), &bodyLocal)
 
 		if unmarshalError != nil {
-			return nil, unmarshalError
+			return MainReq{}, unmarshalError
 		}
 
 		var headerstLocalString = fmt.Sprintf("%s", headerstLocal)
@@ -150,7 +150,7 @@ func (c Services) CacheLRU() ([]byte, error) {
 
 	}
 
-	return nil, nil
+	return MainReq{}, nil
 }
 
 func (c Services) HttpRequest() (*http.Response, error) {
@@ -473,7 +473,7 @@ func GetMD5Hash(text string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func jsonResp(data map[string]any) []byte {
+func jsonResp(data map[string]any) MainReq {
 	/*
 		Генерирует Json ответ
 	*/
@@ -506,18 +506,14 @@ func jsonResp(data map[string]any) []byte {
 	var resp = Response{Headers: headersResp,
 		Length: (data["Length"]).(int),
 		Status: (data["Status"]).(int)}
-	var result = map[string]any{"id": data["IdReq"], "request": req, "response": resp}
-	var jsonResult, jsonError = json.MarshalIndent(result, "", "    ")
 
-	if jsonError != nil {
-		log.Fatal(jsonError)
-	}
+	var mainReq = MainReq{Id: data["IdReq"].(string), Request: req, Response: resp}
 
-	return jsonResult
+	return mainReq
 
 }
 
-func (c Services) searchById() ([]byte, error) {
+func (c Services) searchById() (MainReq, error) {
 	/*
 		Делает поиск внутри БД по id, если id совпадают, возвращает сохраненный с ним request+response
 	*/
@@ -531,7 +527,7 @@ func (c Services) searchById() ([]byte, error) {
 		}
 
 	}
-	return nil, ErrorfetchRequests
+	return MainReq{}, ErrorfetchRequests
 
 }
 
@@ -571,7 +567,74 @@ func (c Services) IdFromDb() (int, error) {
 
 }
 
-func methodPost(decoder []byte, sqlInstance *sql.DB, idTask string) {
+type ReqId struct {
+	Id string
+}
+
+func methodGet(data DelAndGet) {
+	/*
+		Метод возвращает request по id
+	*/
+	var db = data.Db
+	var Id = data.Id
+	var writer = data.Writer
+	var services = Services{SqlDb: db, Table: "tasks"}
+	var text, ErrorsearchById = services.searchByIdTask(Id)
+	if ErrorsearchById != nil {
+		panic(ErrorsearchById)
+	}
+
+	if text == nil {
+		var errorData = map[string]string{"Error": "Request not found"}
+
+		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
+		_, WriteError := writer.Write(dataToWatch)
+		if WriteError != nil {
+			panic(WriteError)
+		}
+		if jsonError != nil {
+			panic(jsonError)
+		}
+
+	} else {
+		_, WriteError := writer.Write(text)
+		if WriteError != nil {
+			panic(WriteError)
+		}
+
+	}
+}
+
+type idTask struct {
+	Id string
+}
+
+func dbInitialization() *sql.DB {
+	/*
+		Метод возвращает инстанс и создает таблицу если её не существует
+	*/
+
+	db, dateBaseError := dbConnection()
+	if dateBaseError != nil {
+		panic(dateBaseError)
+	}
+	var services = Services{SqlDb: db}
+	ErrorReqAndResponse := services.ReqAndResponse()
+	if ErrorReqAndResponse != nil {
+		panic(ErrorReqAndResponse)
+	}
+
+	ErrorTasks := services.Tasks()
+	if ErrorTasks != nil {
+		panic(ErrorTasks)
+	}
+
+	return db
+}
+
+func PostWork(data PostWorkData) MainReq {
+	var decoder = data.Decoder
+	var sqlInstance = data.Db
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	var jsonReq = Request{}
@@ -606,7 +669,7 @@ func methodPost(decoder []byte, sqlInstance *sql.DB, idTask string) {
 		panic(ErrorCacheLRU)
 	}
 
-	if cacheLRU == nil {
+	if cacheLRU.Id == "" {
 
 		var uuidForReq = uuid()
 
@@ -625,100 +688,41 @@ func methodPost(decoder []byte, sqlInstance *sql.DB, idTask string) {
 				panic(ErrorAddInfo)
 			}
 
-			var dataToWatch, jsonError = json.MarshalIndent(headersData, "", "   ")
-			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-			if ErrorAddInfoTask != nil {
-				panic(ErrorAddInfoTask)
-			}
-			if jsonError != nil {
-				panic(jsonError)
-			}
+			return headersData
 
 		}
 
 	} else {
+		return cacheLRU
+	}
+	return MainReq{}
 
-		ErrorAddInfoTask := services.addInfoTask(idTask, cacheLRU)
-		if ErrorAddInfoTask != nil {
-			panic(ErrorAddInfoTask)
-		}
-
+}
+func PostWorker(data Data) {
+	var body = data.Body
+	var sqlInstance = data.Db
+	var idTask = data.IdTask
+	var dataToWatch, jsonError = json.MarshalIndent(body, "", "   ")
+	var services = Services{SqlDb: sqlInstance, Table: "req_and_response"}
+	ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
+	if ErrorAddInfoTask != nil {
+		panic(ErrorAddInfoTask)
+	}
+	if jsonError != nil {
+		panic(jsonError)
 	}
 }
 
-type ReqId struct {
-	Id string
-}
+func methodDelete(data DelAndGet) {
 
-func methodGet(decoder []byte, sqlInstance *sql.DB, idTask string) {
-	/*
-		Метод возвращает request по id
-	*/
+	var Id = data.Id
+	var sqlInstance = data.Db
+	var writer = data.Writer
 
-	var jsonReq = ReqId{}
-
-	unmarshalError := json.Unmarshal(decoder, &jsonReq)
-	if unmarshalError != nil {
-		panic(unmarshalError)
-	}
-
-	if jsonReq.Id == "" {
-		var services = Services{SqlDb: sqlInstance, Table: "tasks"}
+	if Id == "" {
 		var errorData = map[string]string{"Error": "ID field is empty"}
-
 		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-		ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-		if ErrorAddInfoTask != nil {
-			panic(ErrorAddInfoTask)
-		}
-		if jsonError != nil {
-			panic(jsonError)
-		}
-
-	} else {
-		var services = Services{SqlDb: sqlInstance, Id: jsonReq.Id, Table: "req_and_response"}
-		var text, ErrorsearchById = services.searchById()
-		if ErrorsearchById != nil {
-			panic(ErrorsearchById)
-		}
-
-		if text == nil {
-			var errorData = map[string]string{"Error": "Request not found"}
-
-			var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-			if ErrorAddInfoTask != nil {
-				panic(ErrorAddInfoTask)
-			}
-			if jsonError != nil {
-				panic(jsonError)
-			}
-
-		} else {
-			ErrorAddInfoTask := services.addInfoTask(idTask, text)
-			if ErrorAddInfoTask != nil {
-				panic(ErrorAddInfoTask)
-			}
-		}
-	}
-
-}
-
-func methodGetTask(sqlInstance *sql.DB, idTask string, rw http.ResponseWriter) {
-	/*
-		Метод возвращает request по id
-	*/
-	var services = Services{SqlDb: sqlInstance, Table: "tasks"}
-	var text, ErrorsearchById = services.searchByIdTask(idTask)
-	if ErrorsearchById != nil {
-		panic(ErrorsearchById)
-	}
-
-	if text == nil {
-		var errorData = map[string]string{"Error": "Request not found"}
-
-		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-		_, WriteError := rw.Write(dataToWatch)
+		_, WriteError := writer.Write(dataToWatch)
 		if WriteError != nil {
 			panic(WriteError)
 		}
@@ -727,41 +731,8 @@ func methodGetTask(sqlInstance *sql.DB, idTask string, rw http.ResponseWriter) {
 		}
 
 	} else {
-		_, WriteError := rw.Write(text)
-		if WriteError != nil {
-			panic(WriteError)
-		}
 
-	}
-}
-
-func methodDelete(decoder []byte, sqlInstance *sql.DB, idTask string) {
-	/*
-		Метод удаляет request по id
-	*/
-
-	var jsonReq = ReqId{}
-
-	unmarshalError := json.Unmarshal(decoder, &jsonReq)
-	if unmarshalError != nil {
-		panic(unmarshalError)
-	}
-
-	if jsonReq.Id == "" {
-		var services = Services{SqlDb: sqlInstance}
-		var errorData = map[string]string{"Error": "ID field is empty"}
-
-		var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-		ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-		if ErrorAddInfoTask != nil {
-			panic(ErrorAddInfoTask)
-		}
-		if jsonError != nil {
-			panic(jsonError)
-		}
-	} else {
-		var id = jsonReq.Id
-		var services = Services{Id: id, SqlDb: sqlInstance, Table: "req_and_response"}
+		var services = Services{Id: Id, SqlDb: sqlInstance, Table: "req_and_response"}
 		var removed, ErrorRemoveInfo = services.removeInfo()
 		if ErrorRemoveInfo != nil {
 			panic(ErrorRemoveInfo)
@@ -771,9 +742,9 @@ func methodDelete(decoder []byte, sqlInstance *sql.DB, idTask string) {
 			var errorData = map[string]string{"OK": "Request deleted"}
 
 			var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-			if ErrorAddInfoTask != nil {
-				panic(ErrorAddInfoTask)
+			_, WriteError := writer.Write(dataToWatch)
+			if WriteError != nil {
+				panic(WriteError)
 			}
 			if jsonError != nil {
 				panic(jsonError)
@@ -783,9 +754,9 @@ func methodDelete(decoder []byte, sqlInstance *sql.DB, idTask string) {
 			var errorData = map[string]string{"Error": "Request not found"}
 
 			var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-			ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-			if ErrorAddInfoTask != nil {
-				panic(ErrorAddInfoTask)
+			_, WriteError := writer.Write(dataToWatch)
+			if WriteError != nil {
+				panic(WriteError)
 			}
 			if jsonError != nil {
 				panic(jsonError)
@@ -796,242 +767,45 @@ func methodDelete(decoder []byte, sqlInstance *sql.DB, idTask string) {
 
 }
 
-type idTaskReq struct {
-	IdTask string
-}
-
-func dbInitialization() *sql.DB {
-	/*
-		Метод возвращает инстанс и создает таблицу если её не существует
-	*/
-
-	db, dateBaseError := dbConnection()
-	if dateBaseError != nil {
-		panic(dateBaseError)
-	}
-	var services = Services{SqlDb: db}
-	ErrorReqAndResponse := services.ReqAndResponse()
-	if ErrorReqAndResponse != nil {
-		panic(ErrorReqAndResponse)
-	}
-
-	ErrorTasks := services.Tasks()
-	if ErrorTasks != nil {
-		panic(ErrorTasks)
-	}
-
-	return db
-}
-
-func Worker(mainChan chan WKData, StatusChan chan string, i int) {
+func Worker(DataAndJobChan chan JobAndWork, i int) {
 	fmt.Println("Запущена горутина: ", i)
 	for {
-
-		var mainData = <-mainChan
-
-		var idTask = mainData.Id
-		var decoder = mainData.Decoder
-		var sqlInstance = mainData.Db
-		var methodWK = mainData.Method
+		var Job = (<-DataAndJobChan).Job
+		PostWorker(Job)
 		fmt.Println("Работает горутина номер ", i)
-		if methodWK == http.MethodGet {
-			StatusChan <- "Task started"
-
-			var jsonReq = ReqId{}
-
-			unmarshalError := json.Unmarshal(decoder, &jsonReq)
-			if unmarshalError != nil {
-				panic(unmarshalError)
-			}
-
-			if jsonReq.Id == "" {
-				var services = Services{SqlDb: sqlInstance, Table: "tasks"}
-				var errorData = map[string]string{"Error": "ID field is empty"}
-
-				var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-				ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-				if ErrorAddInfoTask != nil {
-					panic(ErrorAddInfoTask)
-				}
-				if jsonError != nil {
-					panic(jsonError)
-				}
-
-			} else {
-				var services = Services{SqlDb: sqlInstance, Id: jsonReq.Id, Table: "req_and_response"}
-				var text, ErrorsearchById = services.searchById()
-				if ErrorsearchById != nil {
-					panic(ErrorsearchById)
-				}
-
-				if text == nil {
-					var errorData = map[string]string{"Error": "Request not found"}
-
-					var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-					if ErrorAddInfoTask != nil {
-						panic(ErrorAddInfoTask)
-					}
-					if jsonError != nil {
-						panic(jsonError)
-					}
-
-				} else {
-					ErrorAddInfoTask := services.addInfoTask(idTask, text)
-					if ErrorAddInfoTask != nil {
-						panic(ErrorAddInfoTask)
-					}
-				}
-			}
-		} else if methodWK == http.MethodPost {
-			StatusChan <- "Task started"
-
-			client := &http.Client{Timeout: 5 * time.Second}
-			var jsonReq = Request{}
-
-			var unmarshalError = json.Unmarshal(decoder, &jsonReq)
-
-			if unmarshalError != nil {
-				panic(unmarshalError)
-			}
-
-			var body = map[string]string{}
-			var headers = map[string]string{}
-			if jsonReq.Body == nil {
-				body = nil
-			} else {
-				body = jsonReq.Body
-			}
-
-			if jsonReq.Headers == nil {
-				headers = nil
-
-			} else {
-				headers = jsonReq.Headers
-			}
-			var method = jsonReq.Method
-			var url = jsonReq.Url
-
-			var jsR = Request{Method: jsonReq.Method, Url: url, Headers: jsonReq.Headers, Body: jsonReq.Body}
-			var services = Services{Req: jsR, SqlDb: sqlInstance, Client: client, Table: "req_and_response"}
-			var cacheLRU, ErrorCacheLRU = services.CacheLRU()
-			if ErrorCacheLRU != nil {
-				panic(ErrorCacheLRU)
-			}
-
-			if cacheLRU == nil {
-
-				var uuidForReq = uuid()
-
-				var httpResponse, ErrorHttpRequest = services.HttpRequest()
-				if ErrorHttpRequest != nil {
-					panic(ErrorHttpRequest)
-				}
-
-				if httpResponse.StatusCode != 400 {
-					var contentType = httpResponse.Header["Content-Type"][0]
-					var secondHeaders = map[string]any{"Content-Length": httpResponse.ContentLength, "Content-Type": contentType}
-					var headersData = MainReq{Id: uuidForReq, Request: Request{Headers: headers, Body: body, Method: method, Url: url},
-						Response: Response{Headers: secondHeaders, Length: int(httpResponse.ContentLength), Status: httpResponse.StatusCode}}
-					ErrorAddInfo := services.addInfo(headersData)
-					if ErrorAddInfo != nil {
-						panic(ErrorAddInfo)
-					}
-
-					var dataToWatch, jsonError = json.MarshalIndent(headersData, "", "   ")
-					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-					if ErrorAddInfoTask != nil {
-						panic(ErrorAddInfoTask)
-					}
-					if jsonError != nil {
-						panic(jsonError)
-					}
-
-				}
-
-			} else {
-
-				ErrorAddInfoTask := services.addInfoTask(idTask, cacheLRU)
-				if ErrorAddInfoTask != nil {
-					panic(ErrorAddInfoTask)
-				}
-
-			}
-
-		} else if methodWK == http.MethodDelete {
-			StatusChan <- "Task started"
-			var jsonReq = ReqId{}
-
-			unmarshalError := json.Unmarshal(decoder, &jsonReq)
-			if unmarshalError != nil {
-				panic(unmarshalError)
-			}
-
-			if jsonReq.Id == "" {
-				var services = Services{SqlDb: sqlInstance}
-				var errorData = map[string]string{"Error": "ID field is empty"}
-
-				var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-				ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-				if ErrorAddInfoTask != nil {
-					panic(ErrorAddInfoTask)
-				}
-				if jsonError != nil {
-					panic(jsonError)
-				}
-			} else {
-				var id = jsonReq.Id
-				var services = Services{Id: id, SqlDb: sqlInstance, Table: "req_and_response"}
-				var removed, ErrorRemoveInfo = services.removeInfo()
-				if ErrorRemoveInfo != nil {
-					panic(ErrorRemoveInfo)
-				}
-
-				if removed {
-					var errorData = map[string]string{"OK": "Request deleted"}
-
-					var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-					if ErrorAddInfoTask != nil {
-						panic(ErrorAddInfoTask)
-					}
-					if jsonError != nil {
-						panic(jsonError)
-					}
-
-				} else if !removed {
-					var errorData = map[string]string{"Error": "Request not found"}
-
-					var dataToWatch, jsonError = json.MarshalIndent(errorData, "", "   ")
-					ErrorAddInfoTask := services.addInfoTask(idTask, dataToWatch)
-					if ErrorAddInfoTask != nil {
-						panic(ErrorAddInfoTask)
-					}
-					if jsonError != nil {
-						panic(jsonError)
-					}
-				}
-
-			}
-		}
 
 	}
 
 }
 
-type WKData struct {
+type PostWorkData struct {
 	Decoder []byte
 	Method  string
 	Db      *sql.DB
 	Id      string
 }
 
+type Data struct {
+	Body   MainReq
+	Db     *sql.DB
+	IdTask string
+}
+
+type DelAndGet struct {
+	Writer http.ResponseWriter
+	Db     *sql.DB
+	Id     string
+}
+
+type JobAndWork struct {
+	Job Data
+}
+
 func main() {
 	db := dbInitialization()
-	var StatusChan = make(chan string)
-	var mainChan = make(chan WKData)
-	for i := 1; i != 6; i += 1 {
-		go Worker(mainChan, StatusChan, i)
+	var Job = make(chan JobAndWork)
+	for i := 1; i < 6; i += 1 {
+		go Worker(Job, i)
 	}
 
 	var server = func(w http.ResponseWriter, r *http.Request) {
@@ -1041,18 +815,29 @@ func main() {
 			panic(errReadAll)
 		}
 
-		var Req = idTaskReq{}
+		var Req = idTask{}
 		unmarshalError := json.Unmarshal(decoder, &Req)
 		if unmarshalError != nil {
 			panic(unmarshalError)
 		}
-		if r.Method == http.MethodGet && Req.IdTask != "" {
-			methodGetTask(db, Req.IdTask, w)
+		var Id = Req.Id
+		var method = r.Method
 
-		} else {
-			var idTask = uuid()
-			mainChan <- WKData{decoder, r.Method, db, idTask}
-			var TaskData = map[string]string{"idTask": idTask, "Status": <-StatusChan}
+		if method == http.MethodGet && Id != "" {
+			var data = DelAndGet{Writer: w, Db: db, Id: Id}
+			methodGet(data)
+		} else if method == http.MethodDelete {
+
+			var data = DelAndGet{Writer: w, Db: db, Id: Id}
+			methodDelete(data)
+
+		} else if method == http.MethodPost {
+			var IdTask = uuid()
+			var httpRequestData = PostWorkData{Decoder: decoder, Method: method, Db: db}
+			var dataLocal = Data{PostWork(httpRequestData), db, IdTask}
+			Job <- JobAndWork{Job: dataLocal}
+
+			var TaskData = map[string]string{"Id": IdTask, "Status": "Task started"}
 			var idTaskData, jsonError = json.MarshalIndent(TaskData, "", "   ")
 			_, writeError := w.Write(idTaskData)
 			if writeError != nil {
@@ -1063,11 +848,11 @@ func main() {
 			}
 
 		}
+
 		errClose := r.Body.Close()
 		if errClose != nil {
 			panic(errClose)
 		}
-
 	}
 
 	http.HandleFunc("/", server)
