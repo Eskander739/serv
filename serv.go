@@ -808,7 +808,7 @@ func main() {
 		go Worker(Job, i)
 	}
 
-	var server = func(w http.ResponseWriter, r *http.Request) {
+	var deleteTaskById = func(w http.ResponseWriter, r *http.Request) {
 
 		decoder, errReadAll := ioutil.ReadAll(r.Body)
 		if errReadAll != nil {
@@ -821,32 +821,59 @@ func main() {
 			panic(unmarshalError)
 		}
 		var Id = Req.Id
+		var data = DelAndGet{Writer: w, Db: db, Id: Id}
+		methodDelete(data)
+
+		errClose := r.Body.Close()
+		if errClose != nil {
+			panic(errClose)
+		}
+	}
+
+	var giveTaskById = func(w http.ResponseWriter, r *http.Request) {
+
+		decoder, errReadAll := ioutil.ReadAll(r.Body)
+		if errReadAll != nil {
+			panic(errReadAll)
+		}
+
+		var Req = idTask{}
+		unmarshalError := json.Unmarshal(decoder, &Req)
+		if unmarshalError != nil {
+			panic(unmarshalError)
+		}
+
+		var Id = Req.Id
+		var data = DelAndGet{Writer: w, Db: db, Id: Id}
+		methodGet(data)
+
+		errClose := r.Body.Close()
+		if errClose != nil {
+			panic(errClose)
+		}
+
+	}
+	var createTask = func(w http.ResponseWriter, r *http.Request) {
+
+		decoder, errReadAll := ioutil.ReadAll(r.Body)
+		if errReadAll != nil {
+			panic(errReadAll)
+		}
+
 		var method = r.Method
+		var IdTask = uuid()
+		var httpRequestData = PostWorkData{Decoder: decoder, Method: method, Db: db}
+		var dataLocal = Data{PostWork(httpRequestData), db, IdTask}
+		Job <- JobAndWork{Job: dataLocal}
 
-		if method == http.MethodGet && Id != "" {
-			var data = DelAndGet{Writer: w, Db: db, Id: Id}
-			methodGet(data)
-		} else if method == http.MethodDelete {
-
-			var data = DelAndGet{Writer: w, Db: db, Id: Id}
-			methodDelete(data)
-
-		} else if method == http.MethodPost {
-			var IdTask = uuid()
-			var httpRequestData = PostWorkData{Decoder: decoder, Method: method, Db: db}
-			var dataLocal = Data{PostWork(httpRequestData), db, IdTask}
-			Job <- JobAndWork{Job: dataLocal}
-
-			var TaskData = map[string]string{"Id": IdTask, "Status": "Task started"}
-			var idTaskData, jsonError = json.MarshalIndent(TaskData, "", "   ")
-			_, writeError := w.Write(idTaskData)
-			if writeError != nil {
-				panic(writeError)
-			}
-			if jsonError != nil {
-				panic(jsonError)
-			}
-
+		var TaskData = map[string]string{"Id": IdTask, "Status": "Task started"}
+		var idTaskData, jsonError = json.MarshalIndent(TaskData, "", "   ")
+		_, writeError := w.Write(idTaskData)
+		if writeError != nil {
+			panic(writeError)
+		}
+		if jsonError != nil {
+			panic(jsonError)
 		}
 
 		errClose := r.Body.Close()
@@ -855,7 +882,9 @@ func main() {
 		}
 	}
 
-	http.HandleFunc("/", server)
+	http.HandleFunc("/create_task", createTask)
+	http.HandleFunc("/task", giveTaskById)
+	http.HandleFunc("/delete_task", deleteTaskById)
 	listenError := http.ListenAndServe(":8000", nil)
 	if listenError != nil {
 		log.Fatal(listenError)
