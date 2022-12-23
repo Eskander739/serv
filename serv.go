@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -606,7 +607,7 @@ func methodGet(data DelAndGet) {
 }
 
 type idTask struct {
-	Id string
+	Id string `json:"id"`
 }
 
 func dbInitialization() *sql.DB {
@@ -802,6 +803,7 @@ type JobAndWork struct {
 }
 
 func main() {
+	router := mux.NewRouter()
 	db := dbInitialization()
 	var Job = make(chan JobAndWork)
 	for i := 1; i < 6; i += 1 {
@@ -810,17 +812,9 @@ func main() {
 
 	var deleteTaskById = func(w http.ResponseWriter, r *http.Request) {
 
-		decoder, errReadAll := ioutil.ReadAll(r.Body)
-		if errReadAll != nil {
-			panic(errReadAll)
-		}
+		Id := mux.Vars(r)["task-id"]
 
-		var Req = idTask{}
-		unmarshalError := json.Unmarshal(decoder, &Req)
-		if unmarshalError != nil {
-			panic(unmarshalError)
-		}
-		var Id = Req.Id
+		fmt.Println(Id)
 		var data = DelAndGet{Writer: w, Db: db, Id: Id}
 		methodDelete(data)
 
@@ -831,19 +825,9 @@ func main() {
 	}
 
 	var giveTaskById = func(w http.ResponseWriter, r *http.Request) {
+		Id := mux.Vars(r)["task-id"]
 
-		decoder, errReadAll := ioutil.ReadAll(r.Body)
-		if errReadAll != nil {
-			panic(errReadAll)
-		}
-
-		var Req = idTask{}
-		unmarshalError := json.Unmarshal(decoder, &Req)
-		if unmarshalError != nil {
-			panic(unmarshalError)
-		}
-
-		var Id = Req.Id
+		fmt.Println(Id)
 		var data = DelAndGet{Writer: w, Db: db, Id: Id}
 		methodGet(data)
 
@@ -882,10 +866,10 @@ func main() {
 		}
 	}
 
-	http.HandleFunc("/create_task", createTask)
-	http.HandleFunc("/task", giveTaskById)
-	http.HandleFunc("/delete_task", deleteTaskById)
-	listenError := http.ListenAndServe(":8000", nil)
+	router.HandleFunc("/task", createTask)
+	router.HandleFunc("/tasks/{task-id}", giveTaskById)
+	router.HandleFunc("/tasks/{task-id}/deleted", deleteTaskById)
+	listenError := http.ListenAndServe(":8000", router)
 	if listenError != nil {
 		log.Fatal(listenError)
 	}
