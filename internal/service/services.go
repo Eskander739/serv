@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	_ "github.com/go-sql-driver/mysql"
 	"database/sql"
 	"encoding/json"
 	"fmt"
