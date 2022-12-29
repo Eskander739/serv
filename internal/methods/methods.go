@@ -1,17 +1,33 @@
-package main
+package methods
 
 import (
+	"database/sql"
 	"encoding/json"
+	"github.com/serv/internal/service"
+	"github.com/serv/pkg/text-helper"
 	"net/http"
 	"time"
 )
 
-func methodGet(data DelAndGet) {
+type MethodData struct {
+	Writer http.ResponseWriter
+	Db     *sql.DB
+	Id     string
+}
+
+type PostWorkData struct {
+	Decoder []byte
+	Method  string
+	Db      *sql.DB
+	Id      string
+}
+
+func MethodGet(data MethodData) {
 	var db = data.Db
 	var Id = data.Id
 	var writer = data.Writer
-	var services = Services{SqlDb: db, Table: "tasks"}
-	var text, ErrorsearchById = services.searchByIdTask(Id)
+	var services = service.Services{SqlDb: db, Table: "tasks"}
+	var text, ErrorsearchById = services.SearchByIdTask(Id)
 	if ErrorsearchById != nil {
 		panic(ErrorsearchById)
 	}
@@ -37,12 +53,12 @@ func methodGet(data DelAndGet) {
 	}
 }
 
-func methodPost(data PostWorkData) MainReq {
+func MethodPost(data PostWorkData) service.MainRequest {
 	var decoder = data.Decoder
 	var sqlInstance = data.Db
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	var jsonReq = Request{}
+	var jsonReq = service.Request{}
 
 	var unmarshalError = json.Unmarshal(decoder, &jsonReq)
 
@@ -67,8 +83,8 @@ func methodPost(data PostWorkData) MainReq {
 	var method = jsonReq.Method
 	var url = jsonReq.Url
 
-	var jsR = Request{Method: jsonReq.Method, Url: url, Headers: jsonReq.Headers, Body: jsonReq.Body}
-	var services = Services{Req: jsR, SqlDb: sqlInstance, Client: client, Table: "req_and_response"}
+	var jsR = service.Request{Method: jsonReq.Method, Url: url, Headers: jsonReq.Headers, Body: jsonReq.Body}
+	var services = service.Services{Req: jsR, SqlDb: sqlInstance, Client: client, Table: "req_and_response"}
 	var cacheLRU, ErrorCacheLRU = services.CacheLRU()
 	if ErrorCacheLRU != nil {
 		panic(ErrorCacheLRU)
@@ -76,7 +92,7 @@ func methodPost(data PostWorkData) MainReq {
 
 	if cacheLRU.Id == "" {
 
-		var uuidForReq = uuid()
+		var uuidForReq = text_helper.Uuid()
 
 		var httpResponse, ErrorHttpRequest = services.HttpRequest()
 		if ErrorHttpRequest != nil {
@@ -86,9 +102,9 @@ func methodPost(data PostWorkData) MainReq {
 		if httpResponse.StatusCode != 400 {
 			var contentType = httpResponse.Header["Content-Type"][0]
 			var secondHeaders = map[string]any{"Content-Length": httpResponse.ContentLength, "Content-Type": contentType}
-			var headersData = MainReq{Id: uuidForReq, Request: Request{Headers: headers, Body: body, Method: method, Url: url},
-				Response: Response{Headers: secondHeaders, Length: int(httpResponse.ContentLength), Status: httpResponse.StatusCode}}
-			ErrorAddInfo := services.addInfo(headersData)
+			var headersData = service.MainRequest{Id: uuidForReq, Request: service.Request{Headers: headers, Body: body, Method: method, Url: url},
+				Response: service.Response{Headers: secondHeaders, Length: int(httpResponse.ContentLength), Status: httpResponse.StatusCode}}
+			ErrorAddInfo := services.AddInfo(headersData)
 			if ErrorAddInfo != nil {
 				panic(ErrorAddInfo)
 			}
@@ -100,11 +116,11 @@ func methodPost(data PostWorkData) MainReq {
 	} else {
 		return cacheLRU
 	}
-	return MainReq{}
+	return service.MainRequest{}
 
 }
 
-func methodDelete(data DelAndGet) {
+func MethodDelete(data MethodData) {
 
 	var Id = data.Id
 	var sqlInstance = data.Db
@@ -123,8 +139,8 @@ func methodDelete(data DelAndGet) {
 
 	} else {
 
-		var services = Services{Id: Id, SqlDb: sqlInstance, Table: "req_and_response"}
-		var removed, ErrorRemoveInfo = services.removeInfo()
+		var services = service.Services{Id: Id, SqlDb: sqlInstance, Table: "req_and_response"}
+		var removed, ErrorRemoveInfo = services.RemoveInfo()
 		if ErrorRemoveInfo != nil {
 			panic(ErrorRemoveInfo)
 		}

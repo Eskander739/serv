@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/serv/pkg/text-helper"
 	"log"
 	"net/http"
 	"time"
@@ -17,6 +18,72 @@ const (
 	hostname = "localhost:3306"
 	dbname   = "requests"
 )
+
+type Response struct {
+	Headers map[string]any
+	Length  int
+	Status  int
+}
+type Request struct {
+	Headers map[string]string `json:"headers"`
+	Body    map[string]string `json:"body"`
+	Method  string            `json:"method"`
+	Url     string            `json:"url"`
+}
+
+func jsonResponse(data map[string]any) MainRequest {
+	/*
+		Генерирует Json ответ
+	*/
+
+	var headersReq = map[string]string{}
+	var unmarshalError = json.Unmarshal(data["HeadersReq"].([]byte), &headersReq)
+
+	if unmarshalError != nil {
+		log.Fatal(unmarshalError)
+	}
+
+	var headersResp = map[string]any{}
+	var unmarshalError2 = json.Unmarshal(data["HeadersResp"].([]byte), &headersResp)
+
+	if unmarshalError2 != nil {
+		log.Fatal(unmarshalError2)
+	}
+
+	var body = map[string]string{}
+	var unmarshalError3 = json.Unmarshal(data["Body"].([]byte), &body)
+
+	if unmarshalError3 != nil {
+		log.Fatal(unmarshalError3)
+	}
+
+	var req = Request{Headers: headersReq,
+		Body:   body,
+		Method: (data["Method"]).(string), Url: (data["Url"]).(string)}
+
+	var resp = Response{Headers: headersResp,
+		Length: (data["Length"]).(int),
+		Status: (data["Status"]).(int)}
+
+	var mainReq = MainRequest{Id: data["IdReq"].(string), Request: req, Response: resp}
+
+	return mainReq
+
+}
+
+type MainRequest struct {
+	Id       string
+	Response Response
+	Request  Request
+}
+
+type Services struct {
+	Req    Request
+	Client *http.Client
+	SqlDb  *sql.DB
+	Id     string
+	Table  string
+}
 
 func dsn() string {
 	return fmt.Sprintf("%s:%s@tcp(%s)/%s", username, password, hostname, dbname)
@@ -68,7 +135,7 @@ func dbConnection() (*sql.DB, error) {
 	return db, nil
 }
 
-func dbInitialization() *sql.DB {
+func DbInitialization() *sql.DB {
 	/*
 		Метод возвращает инстанс и создает таблицу если её не существует
 	*/
@@ -91,7 +158,7 @@ func dbInitialization() *sql.DB {
 	return db
 }
 
-func (c Services) CacheLRU() (MainReq, error) {
+func (c Services) CacheLRU() (MainRequest, error) {
 	/*
 		Проверяет, существует ли подобный request в БД, если да, возвращает request+response
 	*/
@@ -100,7 +167,7 @@ func (c Services) CacheLRU() (MainReq, error) {
 	var body = fmt.Sprintf("%s", c.Req.Body)
 	var requests, ErrorfetchRequests = c.fetchRequests()
 	if ErrorfetchRequests != nil {
-		return MainReq{}, ErrorfetchRequests
+		return MainRequest{}, ErrorfetchRequests
 	}
 	for _, requestIter := range requests {
 		var methodLocal = (requestIter["Method"]).(string)
@@ -113,25 +180,25 @@ func (c Services) CacheLRU() (MainReq, error) {
 		var unmarshalError = json.Unmarshal(requestIter["Body"].([]byte), &bodyLocal)
 
 		if unmarshalError != nil {
-			return MainReq{}, unmarshalError
+			return MainRequest{}, unmarshalError
 		}
 
 		var headerstLocalString = fmt.Sprintf("%s", headerstLocal)
 		var bodyLocalString = fmt.Sprintf("%s", bodyLocal)
 		if methodLocal == c.Req.Method {
 			if urlLocal == c.Req.Url {
-				if GetMD5Hash(headerstLocalString) == GetMD5Hash(headers) {
-					if GetMD5Hash(bodyLocalString) == GetMD5Hash(body) {
-						return jsonResp(requestIter), nil
+				if text_helper.GetMD5Hash(headerstLocalString) == text_helper.GetMD5Hash(headers) {
+					if text_helper.GetMD5Hash(bodyLocalString) == text_helper.GetMD5Hash(body) {
+						return jsonResponse(requestIter), nil
 					} else if len(body) == 0 && bodyLocal == nil {
-						return jsonResp(requestIter), nil
+						return jsonResponse(requestIter), nil
 					}
 
 				} else if len(headers) == 0 && headerstLocal == nil {
-					if GetMD5Hash(bodyLocalString) == GetMD5Hash(body) {
-						return jsonResp(requestIter), nil
+					if text_helper.GetMD5Hash(bodyLocalString) == text_helper.GetMD5Hash(body) {
+						return jsonResponse(requestIter), nil
 					} else if len(body) == 0 && bodyLocal == nil {
-						return jsonResp(requestIter), nil
+						return jsonResponse(requestIter), nil
 					}
 
 				}
@@ -142,7 +209,7 @@ func (c Services) CacheLRU() (MainReq, error) {
 
 	}
 
-	return MainReq{}, nil
+	return MainRequest{}, nil
 }
 
 func (c Services) HttpRequest() (*http.Response, error) {
@@ -206,7 +273,7 @@ func (c Services) HttpRequest() (*http.Response, error) {
 	}
 }
 
-func (c Services) addInfo(data MainReq) error {
+func (c Services) AddInfo(data MainRequest) error {
 	/*
 		Добавляет запрос в БД
 	*/
@@ -239,7 +306,7 @@ func (c Services) addInfo(data MainReq) error {
 	return ErrorAddInfo
 }
 
-func (c Services) addInfoTask(idTask string, data []byte) error {
+func (c Services) AddInfoTask(idTask string, data []byte) error {
 	/*
 		Добавляет запрос в БД
 	*/
@@ -416,7 +483,7 @@ func (c Services) fetchRequests() ([]map[string]any, error) {
 
 }
 
-func (c Services) removeInfo() (bool, error) {
+func (c Services) RemoveInfo() (bool, error) {
 	/*
 		Удаляет запрос из Бд по id
 	*/
@@ -440,7 +507,7 @@ func (c Services) removeInfo() (bool, error) {
 
 }
 
-func (c Services) searchById() (MainReq, error) {
+func (c Services) searchById() (MainRequest, error) {
 	/*
 		Делает поиск внутри БД по id, если id совпадают, возвращает сохраненный с ним request+response
 	*/
@@ -450,15 +517,15 @@ func (c Services) searchById() (MainReq, error) {
 	for _, requestIter := range requests {
 		if requestIter["IdReq"] == c.Id {
 
-			return jsonResp(requestIter), ErrorfetchRequests
+			return jsonResponse(requestIter), ErrorfetchRequests
 		}
 
 	}
-	return MainReq{}, ErrorfetchRequests
+	return MainRequest{}, ErrorfetchRequests
 
 }
 
-func (c Services) searchByIdTask(idTask string) ([]byte, error) {
+func (c Services) SearchByIdTask(idTask string) ([]byte, error) {
 	/*
 		Делает поиск внутри БД по id, если id совпадают, возвращает сохраненный с ним request+response
 	*/

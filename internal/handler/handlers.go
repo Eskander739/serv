@@ -1,26 +1,30 @@
-package main
+package handler
 
 import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	"github.com/serv/internal/methods"
+	"github.com/serv/internal/service"
+	"github.com/serv/internal/worker"
+	"github.com/serv/pkg/text-helper"
 	"io/ioutil"
 	"net/http"
 )
 
-var db = dbInitialization()
-var Job = make(chan JobAndWork)
+var db = service.DbInitialization()
+var Job = make(chan worker.JobAndWork)
 
-func giveTaskById(w http.ResponseWriter, r *http.Request) {
+func GiveTaskById(w http.ResponseWriter, r *http.Request) {
 	Id := mux.Vars(r)["task-id"]
 	fmt.Println(Id)
-	var data = DelAndGet{Writer: w, Db: db, Id: Id}
+	var data = methods.MethodData{Writer: w, Db: db, Id: Id}
 
 	if r.Method == http.MethodGet {
-		methodGet(data)
+		methods.MethodGet(data)
 
 	} else if r.Method == http.MethodDelete {
-		methodDelete(data)
+		methods.MethodDelete(data)
 	}
 
 	errClose := r.Body.Close()
@@ -29,7 +33,8 @@ func giveTaskById(w http.ResponseWriter, r *http.Request) {
 	}
 
 }
-func createTask(w http.ResponseWriter, r *http.Request) {
+
+func CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	decoder, errReadAll := ioutil.ReadAll(r.Body)
 	if errReadAll != nil {
@@ -37,10 +42,10 @@ func createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var method = r.Method
-	var IdTask = uuid()
-	var httpRequestData = PostWorkData{Decoder: decoder, Method: method, Db: db}
-	var dataLocal = Data{methodPost(httpRequestData), db, IdTask}
-	Job <- JobAndWork{Job: dataLocal}
+	var IdTask = text_helper.Uuid()
+	var httpRequestData = methods.PostWorkData{Decoder: decoder, Method: method, Db: db}
+	var dataLocal = worker.WorkerData{Body: methods.MethodPost(methods.PostWorkData(httpRequestData)), Db: db, IdTask: IdTask}
+	Job <- worker.JobAndWork{Job: dataLocal}
 
 	var TaskData = map[string]string{"Id": IdTask, "Status": "Task started"}
 	var idTaskData, jsonError = json.MarshalIndent(TaskData, "", "   ")
