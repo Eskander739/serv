@@ -3,11 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Eskander739/serv/internal/methods"
+	"github.com/Eskander739/serv/internal/service"
+	"github.com/Eskander739/serv/internal/worker"
+	text_helper "github.com/Eskander739/serv/pkg/text-helper"
 	"github.com/gorilla/mux"
-	"github.com/serv/internal/methods"
-	"github.com/serv/internal/service"
-	"github.com/serv/internal/worker"
-	"github.com/serv/pkg/text-helper"
+
 	"io/ioutil"
 	"net/http"
 )

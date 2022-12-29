@@ -1,9 +1,8 @@
 package main
 
 import (
-	"github.com/serv/internal/handler"
-	"github.com/serv/internal/worker"
-
+	"github.com/Eskander739/serv/internal/handler"
+	"github.com/Eskander739/serv/internal/worker"
 	"github.com/gorilla/mux"
 	"log"
 	"net/http"

@@ -1,4 +1,4 @@
-module github.com/serv/internal/handler
+module github.com/Eskander739/serv/internal/handler
 
 go 1.19
 

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/serv/internal/service"
+	"github.com/Eskander739/serv/internal/service"
 )
 
 type WorkerData struct {

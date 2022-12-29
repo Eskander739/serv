@@ -3,8 +3,9 @@ package methods
 import (
 	"database/sql"
 	"encoding/json"
-	"github.com/serv/internal/service"
-	"github.com/serv/pkg/text-helper"
+	"github.com/Eskander739/serv/internal/service"
+	text_helper "github.com/Eskander739/serv/pkg/text-helper"
+
 	"net/http"
 	"time"
 )

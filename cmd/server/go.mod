@@ -1,4 +1,4 @@
-module github.com/go-service-driver/mysql
+module github.com/Eskander739/serv/cmd/server
 
 go 1.19
 
