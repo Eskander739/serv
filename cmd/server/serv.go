@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"github.com/Eskander739/serv/internal/handler"
